@@ -4,7 +4,7 @@ import pandas as pd
 import yfinance as yf
 
 BASE = Path(__file__).resolve().parent
-BENCHMARK = "^FTMIB"
+BENCHMARK = "FTSEMIB.MI"
 
 def load_universe():
     return pd.read_csv(BASE / "ftsemib_constituents.csv")
