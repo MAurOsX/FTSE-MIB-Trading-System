@@ -22,7 +22,7 @@ with st.sidebar:
     vol_window = st.slider("Media volumi (giorni)", 10, 60, 20, 5)
     min_score = st.slider("Punteggio minimo segnale", 1, 8, 4)
     selected_list = st.selectbox("Universo", ["FTSE MIB – componenti configurati", "Tutti i ticker del file"])
-    st.caption("I dati vengono scaricati da Yahoo Finance tramite yfinance. Possono essere ritardati, incompleti o soggetti a modifiche.")
+    st.caption("I dati vengono scaricati da Yahoo Finance tramite yfinance.")
 
 universe = load_universe()
 if selected_list == "FTSE MIB – componenti configurati":
@@ -37,11 +37,11 @@ def get_data(symbols_tuple, period):
 with st.spinner("Scaricamento quotazioni giornaliere..."):
     data = get_data(tuple(symbols), period)
 
-if "^FTMIB" not in data or data["^FTMIB"].empty:
-    st.error("Non è stato possibile scaricare il benchmark ^FTMIB. Verifica la connessione o il ticker Yahoo Finance.")
+if "FTSEMIB" not in data or data["FTSEMIB"].empty:
+    st.error("Non è stato possibile scaricare il benchmark FTSEMIB. Verifica la connessione o il ticker Yahoo Finance.")
     st.stop()
 
-benchmark = data["^FTMIB"]
+benchmark = data["FTSEMIB"]
 available = [s for s in symbols if s in data and not data[s].empty]
 if not available:
     st.error("Nessun titolo disponibile. Controlla i ticker nel file ftsemib_constituents.csv.")
@@ -173,7 +173,7 @@ with tab4:
 **Dati e limiti**
 - Yahoo Finance via yfinance è una fonte gratuita non ufficiale, senza garanzia di completezza, continuità o licenza per uso professionale.
 - I ticker sono configurati nel CSV e vanno aggiornati quando cambia la composizione FTSE MIB.
-- Il benchmark usa `^FTMIB`; se Yahoo modifica il simbolo, va aggiornato nel codice.
+- Il benchmark usa `FTSEMIB`; se Yahoo modifica il simbolo, va aggiornato nel codice.
 - I segnali sono strumenti di screening e non raccomandazioni personalizzate d'investimento.
 """)
     st.markdown("Fonte per la composizione: [Borsa Italiana – FTSE MIB](https://www.borsaitaliana.it/borsa/azioni/ftse-mib/lista.html).")
