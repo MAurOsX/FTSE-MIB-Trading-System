@@ -1,0 +1,41 @@
+ticker,name,active
+A2A.MI,A2A,True
+AMP.MI,Amplifon,True
+AVIO.MI,Avio,True
+AZM.MI,Azimut,True
+BGN.MI,Banca Generali,True
+BMED.MI,Banca Mediolanum,True
+BMPS.MI,Banca Monte dei Paschi di Siena,True
+BAMI.MI,Banco BPM,True
+BPE.MI,BPER Banca,True
+BCU.MI,Brunello Cucinelli,True
+BZU.MI,Buzzi,True
+CPR.MI,Campari,True
+ENEL.MI,Enel,True
+ENI.MI,Eni,True
+RACE.MI,Ferrari,True
+FCT.MI,Fincantieri,True
+FBK.MI,FinecoBank,True
+G.MI,Generali,True
+HER.MI,Hera,True
+ISP.MI,Intesa Sanpaolo,True
+INW.MI,Inwit,True
+IG.MI,Italgas,True
+LDO.MI,Leonardo,True
+LOT.MI,Lottomatica,True
+MB.MI,Mediobanca,True
+MONC.MI,Moncler,True
+NEXI.MI,Nexi,True
+PIRC.MI,Pirelli,True
+PST.MI,Poste Italiane,True
+PRY.MI,Prysmian,True
+SPM.MI,Saipem,True
+SRG.MI,Snam,True
+STLAM.MI,Stellantis,True
+STMMI.MI,STMicroelectronics,True
+TPRO.MI,Technoprobe,True
+TIT.MI,Telecom Italia,True
+TEN.MI,Tenaris,True
+TRN.MI,Terna,True
+UCG.MI,UniCredit,True
+UNI.MI,Unipol,True
