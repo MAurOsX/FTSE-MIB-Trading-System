@@ -10,7 +10,10 @@ Dashboard Streamlit per analisi tecnica giornaliera dei componenti FTSE MIB.
 - Fallback diretto al chart endpoint Yahoo quando il percorso `yfinance` non restituisce dati.
 - Download sequenziale, niente parallelismo, cache Streamlit 12 ore e cache CSV locale di emergenza nel runtime.
 - Circuit breaker: se Yahoo restituisce 429/401 durante lo scanner, interrompe la scansione invece di continuare con altre richieste.
-- Scanner FTSE MIB, analisi del singolo titolo, grafici, indicatori e backtest semplificato.
+- Scanner FTSE MIB con punteggio leggibile `x/6` e ordinamento per score.
+- Grafico con candele blu (rialziste) e rosse (ribassiste), EMA20, SMA20/50/200, PSAR e marker dei pattern.
+- Rilevamento euristico di doji, hammer, shooting star, bullish/bearish engulfing, breakout/breakdown e possibili testa-e-spalle/inversi.
+- Guida integrata agli indicatori e spiegazione operativa del backtest semplificato.
 - Paniere iniziale aggiornato al 17 novembre 2026; controllare le revisioni successive.
 
 ## Avvio locale

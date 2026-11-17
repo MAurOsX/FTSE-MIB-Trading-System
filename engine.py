@@ -336,18 +336,31 @@ def add_indicators(df: pd.DataFrame, benchmark: Optional[pd.DataFrame] = None) -
     out["Low20"] = out["Low"].rolling(20, min_periods=20).min().shift(1)
     out["Breakout20"] = close > out["High20"]
     out["Breakdown20"] = close < out["Low20"]
-    out["BullishCandle"] = (out["Close"] > out["Open"]) & (out["Close"].shift(1) < out["Open"].shift(1)) & (out["Close"] >= out["Open"].shift(1)) & (out["Open"] <= out["Close"].shift(1))
-    out["BearishCandle"] = (out["Close"] < out["Open"]) & (out["Close"].shift(1) > out["Open"].shift(1)) & (out["Close"] <= out["Open"].shift(1)) & (out["Open"] >= out["Close"].shift(1))
+
+    # Candlestick patterns: heuristic OHLC definitions, not predictive signals.
+    candle_range = (out["High"] - out["Low"]).replace(0, np.nan)
+    body = (out["Close"] - out["Open"]).abs()
+    upper_shadow = out["High"] - out[["Open", "Close"]].max(axis=1)
+    lower_shadow = out[["Open", "Close"]].min(axis=1) - out["Low"]
+    out["Doji"] = body <= candle_range * 0.10
+    out["Hammer"] = (lower_shadow >= body * 2.0) & (upper_shadow <= body * 0.5) & ((out[["Open", "Close"]].min(axis=1) - out["Low"]) / candle_range >= 0.55) & (body > 0)
+    out["ShootingStar"] = (upper_shadow >= body * 2.0) & (lower_shadow <= body * 0.5) & ((out["High"] - out[["Open", "Close"]].max(axis=1)) / candle_range >= 0.55) & (body > 0)
+    prev_bull = out["Close"].shift(1) > out["Open"].shift(1)
+    prev_bear = out["Close"].shift(1) < out["Open"].shift(1)
+    out["BullishEngulfing"] = (out["Close"] > out["Open"]) & prev_bear & (out["Close"] >= out["Open"].shift(1)) & (out["Open"] <= out["Close"].shift(1))
+    out["BearishEngulfing"] = (out["Close"] < out["Open"]) & prev_bull & (out["Close"] <= out["Open"].shift(1)) & (out["Open"] >= out["Close"].shift(1))
+    # Backward-compatible names used in earlier releases.
+    out["BullishCandle"] = out["BullishEngulfing"]
+    out["BearishCandle"] = out["BearishEngulfing"]
 
     if benchmark is not None and not benchmark.empty:
-        b = _normalise_ohlcv(benchmark)["Close"].pct_change().rename("BenchmarkReturn")
+        bdata = _normalise_ohlcv(benchmark)
+        b = bdata["Close"].pct_change().rename("BenchmarkReturn")
         joined = pd.concat([out["Return1D"], b], axis=1, join="inner")
         out["Correlation60D"] = joined["Return1D"].rolling(60, min_periods=30).corr(joined["BenchmarkReturn"]).reindex(out.index)
-        bclose = _normalise_ohlcv(benchmark)["Close"]
-        b20 = bclose.pct_change(20)
-        b60 = bclose.pct_change(60)
-        out["RelativeStrength20D"] = out["Return20D"] - b20.reindex(out.index)
-        out["RelativeStrength60D"] = out["Return60D"] - b60.reindex(out.index)
+        bclose = bdata["Close"]
+        out["RelativeStrength20D"] = out["Return20D"] - bclose.pct_change(20).reindex(out.index)
+        out["RelativeStrength60D"] = out["Return60D"] - bclose.pct_change(60).reindex(out.index)
     else:
         out["Correlation60D"] = np.nan
         out["RelativeStrength20D"] = np.nan
@@ -355,29 +368,87 @@ def add_indicators(df: pd.DataFrame, benchmark: Optional[pd.DataFrame] = None) -
     return out
 
 
+def detect_chart_patterns(data: pd.DataFrame, lookback: int = 100) -> pd.DataFrame:
+    """Return dated heuristic chart-pattern labels for plotting; patterns are approximate."""
+    out = data.copy()
+    out["Pattern"] = ""
+    if len(out) < 5:
+        return out
+    recent = out.tail(lookback)
+    labels: dict[pd.Timestamp, list[str]] = {}
+    def add_label(idx, label):
+        labels.setdefault(idx, []).append(label)
+    for idx, row in recent.iterrows():
+        if bool(row.get("Doji", False)):
+            add_label(idx, "Doji")
+        if bool(row.get("Hammer", False)):
+            add_label(idx, "Hammer")
+        if bool(row.get("ShootingStar", False)):
+            add_label(idx, "Shooting star")
+        if bool(row.get("BullishEngulfing", False)):
+            add_label(idx, "Bullish engulfing")
+        if bool(row.get("BearishEngulfing", False)):
+            add_label(idx, "Bearish engulfing")
+        if bool(row.get("Breakout20", False)):
+            add_label(idx, "Breakout 20g")
+        if bool(row.get("Breakdown20", False)):
+            add_label(idx, "Breakdown 20g")
+
+    # Three-pivot head-and-shoulders / inverse pattern. A neckline break is required.
+    highs = recent["High"].to_numpy()
+    lows = recent["Low"].to_numpy()
+    ix = list(recent.index)
+    peak_idx = [i for i in range(1, len(recent)-1) if highs[i] > highs[i-1] and highs[i] >= highs[i+1]]
+    trough_idx = [i for i in range(1, len(recent)-1) if lows[i] < lows[i-1] and lows[i] <= lows[i+1]]
+    if len(peak_idx) >= 3:
+        a, b, c = peak_idx[-3:]
+        left, head, right = highs[a], highs[b], highs[c]
+        shoulders_close = abs(left-right) / max((left+right)/2, 1e-9) <= 0.06
+        if a < b < c and shoulders_close and head >= max(left, right) * 1.025:
+            neck_left = float(lows[a:b].min())
+            neck_right = float(lows[b:c].min())
+            neckline_now = (neck_left + neck_right) / 2
+            if out["Close"].iloc[-1] < neckline_now:
+                add_label(out.index[-1], "Head & shoulders · neckline rotta")
+            elif len(out) and out.index[-1] == ix[c]:
+                add_label(ix[c], "Possibile testa e spalle")
+    if len(trough_idx) >= 3:
+        a, b, c = trough_idx[-3:]
+        left, head, right = lows[a], lows[b], lows[c]
+        shoulders_close = abs(left-right) / max((left+right)/2, 1e-9) <= 0.06
+        if a < b < c and shoulders_close and head <= min(left, right) * 0.975:
+            neckline_now = (float(highs[a:b].max()) + float(highs[b:c].max())) / 2
+            if out["Close"].iloc[-1] > neckline_now:
+                add_label(out.index[-1], "Testa e spalle inverso · neckline rotta")
+            elif out.index[-1] == ix[c]:
+                add_label(ix[c], "Possibile testa e spalle inverso")
+    for idx, values in labels.items():
+        out.loc[idx, "Pattern"] = " · ".join(values)
+    return out
+
 def score_latest(data: pd.DataFrame) -> dict:
     if data is None or data.empty:
-        return {"score": 0, "signal": "N/D", "trend": "N/D"}
+        return {"score": 0, "signal": "N/D", "trend": "N/D", "checks": []}
     row = data.iloc[-1]
-    score = 0
     checks = [
-        (row.get("Close", np.nan) > row.get("SMA20", np.nan), 1),
-        (row.get("SMA20", np.nan) > row.get("SMA50", np.nan), 1),
-        (row.get("SMA50", np.nan) > row.get("SMA200", np.nan), 1),
-        (row.get("Close", np.nan) > row.get("PSAR", np.nan), 1),
-        (row.get("RelativeStrength20D", np.nan) > 0, 1),
-        (row.get("VolumeRatio", np.nan) > 1.2, 1),
+        ("Prezzo > SMA20", row.get("Close", np.nan) > row.get("SMA20", np.nan)),
+        ("SMA20 > SMA50", row.get("SMA20", np.nan) > row.get("SMA50", np.nan)),
+        ("SMA50 > SMA200", row.get("SMA50", np.nan) > row.get("SMA200", np.nan)),
+        ("Prezzo > Parabolic SAR", row.get("Close", np.nan) > row.get("PSAR", np.nan)),
+        ("Forza relativa 20g > 0", row.get("RelativeStrength20D", np.nan) > 0),
+        ("Volume > 1,2× media 20g", row.get("VolumeRatio", np.nan) > 1.2),
     ]
-    for condition, points in checks:
+    passed = []
+    for label, condition in checks:
         try:
-            if bool(condition):
-                score += points
+            passed.append(bool(condition))
         except (TypeError, ValueError):
-            pass
+            passed.append(False)
+    score = sum(passed)
     trend = "Rialzista" if score >= 4 else "Neutrale" if score >= 2 else "Ribassista"
     signal = "BUY" if score >= 5 else "WATCH" if score >= 3 else "SELL/AVOID"
-    return {"score": score, "signal": signal, "trend": trend}
-
+    return {"score": score, "signal": signal, "trend": trend,
+            "checks": [{"criterio": label, "superato": ok} for (label, _), ok in zip(checks, passed)]}
 
 def scanner_row(ticker: str, company: str, raw: pd.DataFrame, benchmark: pd.DataFrame) -> dict:
     data = add_indicators(raw, benchmark)
@@ -392,7 +463,8 @@ def scanner_row(ticker: str, company: str, raw: pd.DataFrame, benchmark: pd.Data
         "Società": company,
         "Prezzo": row["Close"],
         "Var %": change,
-        "Score": sig["score"],
+        "Score": f"{sig['score']}/6",
+        "Score ordinamento": sig["score"],
         "Segnale": sig["signal"],
         "Trend": sig["trend"],
         "PSAR": row.get("PSAR", np.nan),

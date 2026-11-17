@@ -21,6 +21,7 @@ from engine import (
     scanner_row,
     score_latest,
     save_history_local,
+    detect_chart_patterns,
 )
 
 st.set_page_config(page_title="FTSE MIB Technical Lab", page_icon="📈", layout="wide")
@@ -67,19 +68,73 @@ def pct(value, decimals=2):
 
 
 def make_price_chart(data: pd.DataFrame, title: str):
+    plotted = detect_chart_patterns(data.tail(300))
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
-        x=data.index, open=data["Open"], high=data["High"], low=data["Low"], close=data["Close"], name="Prezzo"
+        x=plotted.index, open=plotted["Open"], high=plotted["High"], low=plotted["Low"], close=plotted["Close"],
+        name="Prezzo", increasing_line_color="#2878B5", increasing_fillcolor="#2878B5",
+        decreasing_line_color="#D94B4B", decreasing_fillcolor="#D94B4B",
     ))
-    for col, label in [("SMA20", "SMA 20"), ("SMA50", "SMA 50"), ("SMA200", "SMA 200"), ("PSAR", "Parabolic SAR")]:
-        if col in data.columns:
-            mode = "markers" if col == "PSAR" else "lines"
-            fig.add_trace(go.Scatter(x=data.index, y=data[col], mode=mode, name=label, marker={"size": 4} if mode == "markers" else None))
+    for col, label, color in [
+        ("EMA20", "EMA 20", "#F39C12"),
+        ("SMA20", "SMA 20", "#17A2B8"),
+        ("SMA50", "SMA 50", "#8E44AD"),
+        ("SMA200", "SMA 200", "#566573"),
+    ]:
+        if col in plotted.columns:
+            fig.add_trace(go.Scatter(x=plotted.index, y=plotted[col], mode="lines", name=label, line={"width": 1.5, "color": color}))
+    if "PSAR" in plotted.columns:
+        fig.add_trace(go.Scatter(x=plotted.index, y=plotted["PSAR"], mode="markers", name="Parabolic SAR", marker={"size": 4, "color": "#222222", "symbol": "circle"}))
+    pattern_rows = plotted[plotted["Pattern"].astype(str).str.len() > 0]
+    if not pattern_rows.empty:
+        bullish_words = ("Bullish", "Hammer", "Breakout", "inverso")
+        for idx, row in pattern_rows.iterrows():
+            label = row["Pattern"]
+            bullish = any(word.lower() in label.lower() for word in bullish_words)
+            y = row["Low"] * 0.985 if bullish else row["High"] * 1.015
+            fig.add_trace(go.Scatter(
+                x=[idx], y=[y], mode="markers+text", name="Pattern rilevati",
+                text=[label], textposition="bottom center" if bullish else "top center",
+                marker={"size": 10, "symbol": "triangle-up" if bullish else "triangle-down", "color": "#168A52" if bullish else "#C0392B"},
+                showlegend=False, hovertemplate="%{text}<extra></extra>"))
     fig.update_layout(
-        title=title, height=570, xaxis_rangeslider_visible=False,
+        title=title, height=650, xaxis_rangeslider_visible=False,
         margin={"l": 10, "r": 10, "t": 50, "b": 10}, legend={"orientation": "h", "y": 1.02},
+        hovermode="x unified",
     )
     return fig
+
+
+def render_indicator_guide():
+    with st.expander("Guida alla lettura del grafico e degli indicatori", expanded=False):
+        st.markdown("""
+        **Candele blu e rosse**
+        - **Blu:** chiusura superiore all'apertura (seduta positiva).
+        - **Rosso:** chiusura inferiore all'apertura (seduta negativa).
+        - Il rettangolo è il corpo (apertura/chiusura); le ombre mostrano massimo e minimo della seduta.
+
+        **Medie mobili**
+        - **EMA20:** media esponenziale a 20 sedute. Pesa maggiormente i prezzi recenti e reagisce più velocemente della SMA20. Prezzo sopra EMA20: momentum di breve più favorevole; sotto: debolezza di breve. Non è un segnale autonomo.
+        - **SMA20 / SMA50 / SMA200:** medie semplici degli ultimi 20, 50 e 200 giorni di Borsa. Servono a leggere rispettivamente breve, medio e lungo periodo. La sequenza SMA20 > SMA50 > SMA200 indica allineamento rialzista; l'opposto indica allineamento ribassista.
+        - **Parabolic SAR:** puntini sotto il prezzo indicano fase rialzista; sopra il prezzo fase ribassista. Può generare falsi cambi di direzione nei mercati laterali.
+
+        **Volumi e forza relativa**
+        - **Volume ratio:** volume della seduta diviso per la media degli ultimi 20 giorni. 1,0x = in linea; 1,5x = 50% sopra la media; 0,5x = metà della media. Un breakout con volumi elevati è generalmente più credibile.
+        - **RS 20g / 60g:** rendimento del titolo meno rendimento del FTSE MIB nello stesso periodo. Positivo = titolo che sovraperforma l'indice; negativo = sottoperforma.
+        - **Correlazione 60g:** da -1 a +1; misura quanto i rendimenti giornalieri si sono mossi insieme all'indice. Non misura la qualità del titolo né la direzione futura.
+
+        **Livelli e pattern**
+        - **Breakout 20g:** chiusura sopra il massimo delle 20 sedute precedenti (la seduta corrente è esclusa dal livello). Possibile rottura rialzista; attenzione ai falsi breakout.
+        - **Breakdown 20g:** chiusura sotto il minimo delle 20 sedute precedenti.
+        - **Doji:** apertura e chiusura molto vicine; equilibrio/indecisione. Conta soprattutto dopo un trend esteso e vicino a supporti/resistenze.
+        - **Hammer (martello):** corpo piccolo nella parte alta e lunga ombra inferiore; possibile rifiuto dei prezzi bassi, potenzialmente rialzista dopo una discesa.
+        - **Shooting star:** corpo piccolo nella parte bassa e lunga ombra superiore; possibile rifiuto dei prezzi alti, potenzialmente ribassista dopo una salita.
+        - **Bullish engulfing:** candela positiva che avvolge il corpo della precedente candela negativa; possibile inversione rialzista.
+        - **Bearish engulfing:** candela negativa che avvolge il corpo della precedente positiva; possibile inversione ribassista.
+        - **Testa e spalle / inverso:** pattern di inversione formato da tre massimi/minimi, con il centrale più pronunciato. Il segnale è considerato confermato solo alla rottura della neckline. Il rilevamento automatico è euristico e può sbagliare: verificare sempre la figura sul grafico.
+
+        I marker verdi sono pattern/rotture potenzialmente rialzisti; quelli rossi potenzialmente ribassisti. Il doji è neutrale. Nessun pattern garantisce un movimento successivo.
+        """)
 
 
 def show_fetch_error(ticker: str, exc: Exception):
@@ -166,8 +221,9 @@ if page == "Scanner FTSE MIB":
     if "scanner_rows" in st.session_state:
         scan = pd.DataFrame(st.session_state["scanner_rows"])
         if not scan.empty:
-            if "Score" in scan.columns:
-                scan = scan.sort_values(["Score", "Var %"], ascending=[False, False], na_position="last")
+            if "Score ordinamento" in scan.columns:
+                scan = scan.sort_values(["Score ordinamento", "Var %"], ascending=[False, False], na_position="last")
+                scan = scan.drop(columns=["Score ordinamento"])
             st.dataframe(
                 scan,
                 use_container_width=True,
@@ -213,13 +269,33 @@ elif page == "Analisi titolo":
         m5.metric("RS 20 sedute", pct(row["RelativeStrength20D"]))
         st.plotly_chart(make_price_chart(data.tail(300), f"{ticker} · ultime 300 sedute"), use_container_width=True)
         st.write(f"**Trend:** {signal['trend']} · **Ultima barra:** {data.index[-1]:%d/%m/%Y} · **Fonte:** {source}")
-        cols = ["Close", "SMA20", "SMA50", "SMA200", "EMA20", "PSAR", "Volume", "VolumeRatio", "Correlation60D", "RelativeStrength20D", "RelativeStrength60D", "Breakout20", "Breakdown20", "BullishCandle", "BearishCandle"]
+        st.markdown("**Composizione del punteggio (6 condizioni, un punto ciascuna)**")
+        score_cols = st.columns(3)
+        for i, item in enumerate(signal["checks"]):
+            score_cols[i % 3].write(("✓ " if item["superato"] else "○ ") + item["criterio"])
+        pattern_data = detect_chart_patterns(data)
+        latest_patterns = pattern_data[pattern_data["Pattern"].astype(str).str.len() > 0].tail(12)
+        if latest_patterns.empty:
+            st.info("Nessun pattern automatico rilevato nelle ultime 100 sedute.")
+        else:
+            st.markdown("**Figure e segnali individuati**")
+            for dt, item in latest_patterns.iterrows():
+                st.write(f"{dt:%d/%m/%Y}: {item['Pattern']}")
+        cols = ["Close", "EMA20", "SMA20", "SMA50", "SMA200", "PSAR", "Volume", "VolumeRatio", "Correlation60D", "RelativeStrength20D", "RelativeStrength60D", "Breakout20", "Breakdown20", "Doji", "Hammer", "ShootingStar", "BullishEngulfing", "BearishEngulfing"]
         st.dataframe(data[cols].tail(15).sort_index(ascending=False), use_container_width=True)
+        render_indicator_guide()
     except Exception as exc:
         show_fetch_error(ticker, exc)
 
 elif page == "Backtest":
     st.subheader("Backtest giornaliero")
+    st.markdown("""
+    Il backtest simula una strategia **long-only Parabolic SAR + SMA50** sul titolo selezionato. Non usa il punteggio scanner 0–6.
+
+    **Regole:** entra quando, alla chiusura della seduta precedente, il prezzo è sopra PSAR e SMA50; esce quando è sotto PSAR oppure sotto SMA50. Il segnale viene applicato dalla seduta successiva per evitare di usare informazioni future. Non apre posizioni short.
+
+    **Come usarlo:** scegli un titolo, imposta il costo percentuale stimato per ogni acquisto/vendita (0,10% significa 0,10% per ciascun cambio di posizione), quindi premi *Esegui backtest*. Confronta la curva strategia con Buy & Hold e valuta rendimento, drawdown, Sharpe, esposizione e numero di cambi di posizione.
+    """)
     constituents = load_constituents()
     options = {f"{r.company} ({r.ticker})": r.ticker for r in constituents.itertuples()}
     selected_label = st.selectbox("Titolo da testare", list(options.keys()), key="backtest_ticker")
@@ -252,6 +328,18 @@ elif page == "Backtest":
         fig.update_layout(height=450, title=f"Equity curve · {ticker}", margin={"l": 10, "r": 10, "t": 50, "b": 10})
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"Fonte: {st.session_state['bt_source']}. Costi applicati a ogni variazione di posizione.")
+        with st.expander("Come interpretare i risultati del backtest"):
+            st.markdown("""
+            - **Rendimento totale:** variazione complessiva del capitale simulato nel periodo.
+            - **CAGR:** rendimento annualizzato composto; consente confronti tra periodi di durata diversa.
+            - **Max drawdown:** peggior perdita percentuale dal precedente massimo della curva; più è negativo, più profonda è stata la perdita.
+            - **Sharpe:** rendimento medio rapportato alla volatilità annualizzata (qui senza tasso privo di rischio). Più alto può indicare un miglior rapporto rendimento/volatilità, ma non basta da solo.
+            - **Esposizione:** percentuale delle sedute in cui la strategia è investita.
+            - **Operazioni:** numero di cambi di posizione (entrate e uscite), non numero di singole azioni/contratti.
+            - **Equity curve:** capitale teorico nel tempo; confrontare la linea strategia con Buy & Hold.
+
+            Il costo inserito è applicato a ogni entrata e uscita. Il modello è didattico: non include slippage, imposte, dividendi, corporate actions, spread, liquidità, né survivorship bias. I risultati passati non predicono quelli futuri.
+            """)
         st.warning("Backtest didattico: non include slippage, fiscalità, dividendi, corporate actions, vincoli di liquidità o survivorship bias. Non è una previsione né una raccomandazione d'investimento.")
 
 else:
@@ -272,13 +360,14 @@ else:
         - Forza relativa a 20 e 60 sedute rispetto al benchmark.
         - Breakout/breakdown a 20 sedute e pattern engulfing elementari.
 
-        **Punteggio scanner (0–6)**
-        Un punto per ciascuna condizione: close sopra SMA20; SMA20 sopra SMA50; SMA50 sopra SMA200; close sopra PSAR; forza relativa 20 sedute positiva; volume sopra 1,2 volte la media a 20 sedute. BUY da 5, WATCH da 3, altrimenti SELL/AVOID.
+        **Punteggio scanner (x/6)**
+        Lo scanner mostra il punteggio nel formato x/6. Un punto per ciascuna condizione: close sopra SMA20; SMA20 sopra SMA50; SMA50 sopra SMA200; close sopra PSAR; forza relativa 20 sedute positiva; volume sopra 1,2 volte la media a 20 sedute. BUY da 5, WATCH da 3, altrimenti SELL/AVOID. I valori mancanti non assegnano punti.
 
         **Limiti**
         Yahoo Finance è una fonte non ufficiale per l'accesso automatizzato e può limitare o modificare gli endpoint. Il ritardo delle quotazioni non evita gli errori 429/401. Il filesystem di Streamlit Community Cloud non è storage persistente garantito: la cache CSV locale può andare persa al riavvio. Il backtest è semplificato e non va usato da solo per decisioni operative.
         """
     )
+    render_indicator_guide()
     st.markdown(f"**Benchmark attualmente caricato:** `{BENCHMARK}` · **Ultima osservazione:** {benchmark_raw.index[-1]:%d/%m/%Y} · **Fonte:** {benchmark_source}")
     st.markdown("**Composizione paniere:** lista di partenza aggiornata al 17/11/2026. Verificare periodicamente le revisioni trimestrali FTSE Russell/Borsa Italiana.")
     st.markdown("**Riferimenti:** [Yahoo Finance – FTSE MIB](https://finance.yahoo.com/quote/FTSEMIB.MI/) · [Borsa Italiana – componenti FTSE MIB](https://www.borsaitaliana.it/borsa/azioni/ftse-mib/lista.html)")
