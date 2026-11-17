@@ -8,7 +8,7 @@ BMED.MI,Banca Mediolanum,True
 BMPS.MI,Banca Monte dei Paschi di Siena,True
 BAMI.MI,Banco BPM,True
 BPE.MI,BPER Banca,True
-BCU.MI,Brunello Cucinelli,True
+BC.MI,Brunello Cucinelli,True
 BZU.MI,Buzzi,True
 CPR.MI,Campari,True
 ENEL.MI,Enel,True
@@ -22,7 +22,7 @@ ISP.MI,Intesa Sanpaolo,True
 INW.MI,Inwit,True
 IG.MI,Italgas,True
 LDO.MI,Leonardo,True
-LOT.MI,Lottomatica,True
+LTMC.MI,Lottomatica,True
 MB.MI,Mediobanca,True
 MONC.MI,Moncler,True
 NEXI.MI,Nexi,True
