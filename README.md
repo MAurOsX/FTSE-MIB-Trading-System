@@ -1,19 +1,20 @@
-# FTSE MIB Technical Trading Lab
+# FTSE MIB Technical Trading Lab — v2
 
-Dashboard Streamlit per analisi tecnica giornaliera dei componenti FTSE MIB e confronto con il benchmark `^FTMIB`.
+Dashboard Streamlit per analisi tecnica giornaliera dei componenti FTSE MIB.
 
-## Funzioni
-- Parabolic SAR (parametri 0,02 / 0,02 / 0,20)
-- SMA 20/50/200 ed EMA 20
-- Volumi e rapporto volume/media mobile
-- Correlazione mobile dei rendimenti giornalieri con FTSE MIB
-- Forza relativa a 20 sedute rispetto all'indice
-- Rilevazione euristica di doppio/triplo massimo/minimo, testa e spalle e triangoli
-- Scanner con score tecnico, BUY / SELL / NEUTRAL
-- Grafico candlestick e volumi
-- Backtest dimostrativo long-only con segnale applicato dalla seduta successiva
+## Caratteristiche
+
+- Benchmark corretto: `FTSEMIB.MI`.
+- Storico daily di 5 anni (`1d`).
+- `yfinance` aggiornato e `curl_cffi` come backend HTTP preferenziale.
+- Fallback diretto al chart endpoint Yahoo quando il percorso `yfinance` non restituisce dati.
+- Download sequenziale, niente parallelismo, cache Streamlit 12 ore e cache CSV locale di emergenza nel runtime.
+- Circuit breaker: se Yahoo restituisce 429/401 durante lo scanner, interrompe la scansione invece di continuare con altre richieste.
+- Scanner FTSE MIB, analisi del singolo titolo, grafici, indicatori e backtest semplificato.
+- Paniere iniziale aggiornato al 17 novembre 2026; controllare le revisioni successive.
 
 ## Avvio locale
+
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate
@@ -22,17 +23,24 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Pubblicazione gratuita su Streamlit Community Cloud
-1. Crea un repository GitHub e carica tutti i file di questa cartella.
-2. Accedi a https://share.streamlit.io/ con GitHub.
-3. Seleziona il repository, branch `main`, file `app.py`.
-4. Premi Deploy. Streamlit costruirà l'app usando `requirements.txt`.
+## Deploy su Streamlit Community Cloud
 
-## Aggiornamento componenti
-La composizione FTSE MIB è soggetta a revisione. Aggiorna `ftsemib_constituents.csv` quando Borsa Italiana/FTSE Russell modifica l'indice. La pagina ufficiale è:
-https://www.borsaitaliana.it/borsa/azioni/ftse-mib/lista.html
+1. Scaricare ed estrarre lo ZIP.
+2. Nel repository GitHub sostituire i file `app.py`, `engine.py`, `requirements.txt`, `ftsemib_constituents.csv` e `README.md` con quelli di questo pacchetto.
+3. Effettuare il commit sul branch `main`.
+4. In Streamlit Community Cloud aprire l'app e selezionare **Reboot app** se il deploy non parte automaticamente.
+5. Attendere la reinstallazione delle dipendenze.
 
-## Dati e avvertenze
-La versione iniziale usa Yahoo Finance tramite `yfinance` (dati gratuiti non ufficiali, senza SLA e potenzialmente ritardati o incompleti). I ticker .MI e il simbolo indice `^FTMIB` vanno verificati in caso di errori di download. Non è un feed professionale e non va usato come unica fonte per decisioni operative.
+## Come sono gestiti i dati
 
-Le figure sono riconosciute tramite regole numeriche sui pivot, quindi possono produrre falsi positivi/negativi. Il backtest è didattico e non considera commissioni, slippage, tasse, spread, dividendi, corporate actions o survivorship bias. Lo scanner non invia ordini e non fornisce consulenza finanziaria.
+- Il benchmark `FTSEMIB.MI` viene scaricato all'apertura dell'app.
+- I 40 titoli vengono scaricati solo quando si avvia lo scanner o si apre l'analisi/backtest del singolo titolo.
+- La cache per ticker dura 12 ore. Il pulsante di aggiornamento forzato svuota la cache e deve essere usato con parsimonia.
+- In caso di errore Yahoo, l'app prova il chart endpoint tramite `curl_cffi` senza richiedere il crumb. Se anche questo fallisce, usa l'ultimo CSV locale disponibile nel runtime.
+- La cache locale non è storage persistente garantito su Streamlit Community Cloud: può essere cancellata quando il container viene riavviato o ricreato.
+
+## Note importanti
+
+Yahoo Finance non offre un'API pubblica ufficiale per questo uso. L'accesso automatizzato può essere limitato (HTTP 429/401) e nessuna modifica al codice può garantire disponibilità continua. Il ritardo dei prezzi non elimina i rate limit. Se il blocco riguarda l'IP del server cloud, potrebbe essere necessario attendere o usare un provider con API e condizioni d'uso esplicite.
+
+Il backtest è didattico e semplificato: non include slippage, fiscalità, dividendi, corporate actions, liquidità, survivorship bias o costi di mercato completi. Non costituisce consulenza finanziaria né segnale automatico di acquisto/vendita.
