@@ -521,3 +521,143 @@ def run_backtest(raw: pd.DataFrame, fee_pct: float = 0.10) -> tuple[pd.DataFrame
         "Operazioni": int((turnover > 0).sum()),
     }
     return result, stats
+
+
+def _add_atr(data: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+    out = data.copy()
+    prev_close = out["Close"].shift(1)
+    tr = pd.concat([
+        out["High"] - out["Low"],
+        (out["High"] - prev_close).abs(),
+        (out["Low"] - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    out["ATR14"] = tr.rolling(period, min_periods=period).mean()
+    out["ATR_pct"] = out["ATR14"] / out["Close"]
+    out["High55"] = out["High"].rolling(55, min_periods=55).max().shift(1)
+    out["EMA50"] = out["Close"].ewm(span=50, adjust=False, min_periods=50).mean()
+    out["SMA200_slope"] = out["SMA200"] / out["SMA200"].shift(20) - 1
+    return out
+
+
+def single_stock_signal(raw: pd.DataFrame, benchmark: Optional[pd.DataFrame] = None) -> dict:
+    """Medium-term single-stock setup: market regime, stock trend, RS and entry trigger."""
+    data = _add_atr(add_indicators(raw, benchmark))
+    if data.empty or len(data) < 220:
+        return {"signal": "DATI INSUFFICIENTI", "checks": [], "entry": "Nessuno", "stop": np.nan}
+    row = data.iloc[-1]
+    market_ok = True
+    market_text = "Non disponibile"
+    if benchmark is not None and not benchmark.empty:
+        bm = _add_atr(add_indicators(benchmark)).dropna(subset=["SMA200"])
+        if not bm.empty:
+            br = bm.iloc[-1]
+            market_ok = bool(br["Close"] > br["SMA200"] and br["SMA200"] > bm["SMA200"].iloc[-21]) if len(bm) > 21 else bool(br["Close"] > br["SMA200"])
+            market_text = "Rialzista" if market_ok else "Debole / ribassista"
+    trend_ok = bool(row["Close"] > row["SMA200"] and row["SMA50"] > row["SMA200"] and row["SMA200_slope"] > 0)
+    momentum_ok = bool(row.get("RelativeStrength60D", np.nan) > 0) if pd.notna(row.get("RelativeStrength60D", np.nan)) else False
+    breakout = bool(row["Close"] > row["High55"]) if pd.notna(row["High55"]) else False
+    recent_touch = bool((data["Low"].tail(6) <= data["EMA20"].tail(6) * 1.01).any())
+    pullback_recovery = bool(recent_touch and row["Close"] > row["EMA20"] and row["Close"] > row["Open"])
+    entry = "Breakout 55 sedute" if breakout else "Ritracciamento + recupero EMA20" if pullback_recovery else "Nessun trigger"
+    ready = market_ok and trend_ok and momentum_ok and (breakout or pullback_recovery)
+    if ready:
+        signal = "COMPRA"
+    elif not market_ok or not trend_ok:
+        signal = "ATTENDI"
+    elif not momentum_ok:
+        signal = "ATTENDI"
+    else:
+        signal = "ATTENDI"
+    stop = row["Close"] - 3.0 * row["ATR14"] if pd.notna(row["ATR14"]) else np.nan
+    checks = [
+        {"criterio": "FTSE MIB sopra SMA200 crescente", "superato": market_ok, "dettaglio": market_text},
+        {"criterio": "Titolo sopra SMA200 e SMA50 > SMA200", "superato": trend_ok, "dettaglio": "Trend di lungo periodo"},
+        {"criterio": "Forza relativa 60 sedute positiva", "superato": momentum_ok, "dettaglio": "Titolo meglio del FTSE MIB"},
+        {"criterio": "Trigger di ingresso", "superato": breakout or pullback_recovery, "dettaglio": entry},
+    ]
+    return {"signal": signal, "checks": checks, "entry": entry, "stop": stop,
+            "atr": row.get("ATR14", np.nan), "market": market_text, "data": data}
+
+
+def run_momentum_backtest(raw: pd.DataFrame, benchmark: Optional[pd.DataFrame] = None,
+                          fee_pct: float = 0.10, atr_multiple: float = 3.0) -> tuple[pd.DataFrame, dict]:
+    """Long-only single-stock trend/momentum strategy, daily close signals and ATR stop."""
+    data = _add_atr(add_indicators(raw, benchmark))
+    if len(data) < 260:
+        raise ValueError("Servono almeno 260 sedute per il backtest Trend + Momentum + ATR")
+    if benchmark is not None and not benchmark.empty:
+        bm = _add_atr(add_indicators(benchmark))
+        market_filter = (bm["Close"] > bm["SMA200"]) & (bm["SMA200"] > bm["SMA200"].shift(20))
+        data["MarketOK"] = market_filter.reindex(data.index).ffill().fillna(False)
+    else:
+        data["MarketOK"] = True
+    trend = (data["Close"] > data["SMA200"]) & (data["SMA50"] > data["SMA200"]) & (data["SMA200"] > data["SMA200"].shift(20))
+    relative = data["RelativeStrength60D"] > 0 if benchmark is not None and not benchmark.empty else pd.Series(True, index=data.index)
+    breakout = data["Close"] > data["High55"]
+    touch = (data["Low"].rolling(6, min_periods=1).min() <= data["EMA20"] * 1.01)
+    pullback = touch & (data["Close"] > data["EMA20"]) & (data["Close"] > data["Open"])
+    entry_signal = data["MarketOK"] & trend & relative & (breakout | pullback)
+    exit_signal = (data["Close"] < data["SMA50"]) | (~data["MarketOK"])
+
+    n = len(data)
+    pos = np.zeros(n, dtype=float)
+    strat_ret = np.zeros(n, dtype=float)
+    stop_line = np.full(n, np.nan)
+    in_pos = False
+    highest = np.nan
+    stop = np.nan
+    fee = fee_pct / 100.0
+    for i in range(1, n):
+        prev_close = float(data["Close"].iloc[i-1])
+        opened_today = False
+        if not in_pos and bool(entry_signal.iloc[i-1]):
+            in_pos = True
+            opened_today = True
+            highest = prev_close
+            atr_prev = data["ATR14"].iloc[i-1]
+            stop = prev_close - atr_multiple * atr_prev if pd.notna(atr_prev) else np.nan
+            strat_ret[i] -= fee
+        if in_pos:
+            low = float(data["Low"].iloc[i])
+            opn = float(data["Open"].iloc[i])
+            close = float(data["Close"].iloc[i])
+            exit_price = None
+            if pd.notna(stop) and low <= stop:
+                exit_price = min(opn, stop) if opn < stop else stop
+            elif bool(exit_signal.iloc[i-1]) and not opened_today:
+                # Previous close generated the exit; execute at today's open.
+                exit_price = opn
+            if exit_price is not None:
+                strat_ret[i] += exit_price / prev_close - 1.0
+                strat_ret[i] -= fee
+                in_pos = False
+                highest = np.nan
+                stop = np.nan
+            else:
+                strat_ret[i] += close / prev_close - 1.0
+                highest = max(highest, float(data["High"].iloc[i]))
+                atr_now = data["ATR14"].iloc[i]
+                if pd.notna(atr_now):
+                    candidate = highest - atr_multiple * atr_now
+                    stop = max(stop, candidate) if pd.notna(stop) else candidate
+                pos[i] = 1.0
+                stop_line[i] = stop
+    returns = pd.Series(strat_ret, index=data.index)
+    bh_ret = data["Close"].pct_change().fillna(0.0)
+    equity = (1 + returns).cumprod()
+    bh = (1 + bh_ret).cumprod()
+    dd = equity / equity.cummax() - 1
+    years = max((data.index[-1] - data.index[0]).days / 365.25, 0.1)
+    vol = returns.std() * np.sqrt(252)
+    stats = {
+        "Rendimento totale": equity.iloc[-1] - 1,
+        "CAGR": equity.iloc[-1] ** (1 / years) - 1 if equity.iloc[-1] > 0 else -1,
+        "Max drawdown": dd.min(),
+        "Sharpe": returns.mean() * 252 / vol if vol and np.isfinite(vol) else np.nan,
+        "Esposizione %": float(np.mean(pos)),
+        "Operazioni": int(np.sum(np.abs(np.diff(np.r_[0, pos])) > 0)),
+    }
+    result = pd.DataFrame({"Prezzo": data["Close"], "Posizione": pos, "Stop ATR": stop_line,
+                           "Equity strategia": equity, "Equity buy&hold": bh, "Drawdown": dd,
+                           "Segnale ingresso": entry_signal, "Segnale uscita": exit_signal}, index=data.index)
+    return result, stats

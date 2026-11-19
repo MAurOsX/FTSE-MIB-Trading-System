@@ -47,3 +47,8 @@ streamlit run app.py
 Yahoo Finance non offre un'API pubblica ufficiale per questo uso. L'accesso automatizzato può essere limitato (HTTP 429/401) e nessuna modifica al codice può garantire disponibilità continua. Il ritardo dei prezzi non elimina i rate limit. Se il blocco riguarda l'IP del server cloud, potrebbe essere necessario attendere o usare un provider con API e condizioni d'uso esplicite.
 
 Il backtest è didattico e semplificato: non include slippage, fiscalità, dividendi, corporate actions, liquidità, survivorship bias o costi di mercato completi. Non costituisce consulenza finanziaria né segnale automatico di acquisto/vendita.
+
+## Strategia singolo titolo v3
+La sezione Analisi titolo mostra un'indicazione COMPRA/ATTENDI con filtro FTSE MIB (close sopra SMA200 e SMA200 crescente), trend del titolo (close sopra SMA200, SMA50 sopra SMA200 e SMA200 crescente), forza relativa a 60 sedute positiva e trigger su breakout 55 sedute oppure ritracciamento con recupero EMA20. Lo stop indicativo è 3 × ATR(14).
+
+La sezione Backtest permette di confrontare Trend + Momentum + ATR con la precedente PSAR + SMA50 e Buy & Hold. I segnali di chiusura vengono applicati dalla seduta successiva; lo stop ATR viene verificato su Open/Low giornalieri. Il backtest non include slippage, tasse, dividendi o corporate actions.

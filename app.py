@@ -18,6 +18,8 @@ from engine import (
     load_history_local,
     parabolic_sar,
     run_backtest,
+    run_momentum_backtest,
+    single_stock_signal,
     scanner_row,
     score_latest,
     save_history_local,
@@ -261,6 +263,7 @@ elif page == "Analisi titolo":
         data = add_indicators(raw, benchmark_raw)
         row = data.iloc[-1]
         signal = score_latest(data)
+        setup = single_stock_signal(raw, benchmark_raw)
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Ultimo prezzo", euro(row["Close"]))
         m2.metric("Segnale", signal["signal"])
@@ -269,7 +272,15 @@ elif page == "Analisi titolo":
         m5.metric("RS 20 sedute", pct(row["RelativeStrength20D"]))
         st.plotly_chart(make_price_chart(data.tail(300), f"{ticker} · ultime 300 sedute"), use_container_width=True)
         st.write(f"**Trend:** {signal['trend']} · **Ultima barra:** {data.index[-1]:%d/%m/%Y} · **Fonte:** {source}")
-        st.markdown("**Composizione del punteggio (6 condizioni, un punto ciascuna)**")
+        st.markdown("### Strategia Trend + Momentum + ATR")
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Indicazione operativa", setup["signal"])
+        s2.metric("Setup di ingresso", setup["entry"])
+        s3.metric("Stop ATR indicativo", euro(setup["stop"]))
+        st.caption("Segnale su dati giornalieri: l'indicazione COMPRA richiede trend del titolo, forza relativa positiva, filtro FTSE MIB e trigger tecnico. Non è una raccomandazione personalizzata.")
+        for item in setup["checks"]:
+            st.write(("✓ " if item["superato"] else "○ ") + f"**{item['criterio']}** — {item['dettaglio']}")
+        st.markdown("**Composizione del punteggio scanner (6 condizioni, un punto ciascuna)**")
         score_cols = st.columns(3)
         for i, item in enumerate(signal["checks"]):
             score_cols[i % 3].write(("✓ " if item["superato"] else "○ ") + item["criterio"])
@@ -288,31 +299,30 @@ elif page == "Analisi titolo":
         show_fetch_error(ticker, exc)
 
 elif page == "Backtest":
-    st.subheader("Backtest giornaliero")
-    st.markdown("""
-    Il backtest simula una strategia **long-only Parabolic SAR + SMA50** sul titolo selezionato. Non usa il punteggio scanner 0–6.
-
-    **Regole:** entra quando, alla chiusura della seduta precedente, il prezzo è sopra PSAR e SMA50; esce quando è sotto PSAR oppure sotto SMA50. Il segnale viene applicato dalla seduta successiva per evitare di usare informazioni future. Non apre posizioni short.
-
-    **Come usarlo:** scegli un titolo, imposta il costo percentuale stimato per ogni acquisto/vendita (0,10% significa 0,10% per ciascun cambio di posizione), quindi premi *Esegui backtest*. Confronta la curva strategia con Buy & Hold e valuta rendimento, drawdown, Sharpe, esposizione e numero di cambi di posizione.
-    """)
+    st.subheader("Backtest giornaliero su un singolo titolo")
+    st.markdown("Il backtest confronta la nuova strategia **Trend + Momentum + ATR** con Buy & Hold sullo stesso titolo. Manteniamo anche la vecchia PSAR + SMA50 come termine di confronto.")
     constituents = load_constituents()
     options = {f"{r.company} ({r.ticker})": r.ticker for r in constituents.itertuples()}
     selected_label = st.selectbox("Titolo da testare", list(options.keys()), key="backtest_ticker")
     ticker = options[selected_label]
+    strategy_name = st.radio("Strategia", ["Trend + Momentum + ATR", "PSAR + SMA50"], horizontal=True)
     fee = st.number_input("Costo stimato per ogni acquisto/vendita (%)", min_value=0.0, max_value=1.0, value=0.10, step=0.01)
     if st.button("Esegui backtest", type="primary"):
         try:
             with st.spinner(f"Caricamento storico {ticker}…"):
                 raw, source = get_history(ticker)
-            result, stats = run_backtest(raw, fee_pct=fee)
+            if strategy_name == "Trend + Momentum + ATR":
+                result, stats = run_momentum_backtest(raw, benchmark_raw, fee_pct=fee)
+            else:
+                result, stats = run_backtest(raw, fee_pct=fee)
             st.session_state["bt_result"] = result
             st.session_state["bt_stats"] = stats
             st.session_state["bt_source"] = source
             st.session_state["bt_ticker"] = ticker
+            st.session_state["bt_strategy"] = strategy_name
         except Exception as exc:
             show_fetch_error(ticker, exc)
-    if "bt_result" in st.session_state and st.session_state.get("bt_ticker") == ticker:
+    if "bt_result" in st.session_state and st.session_state.get("bt_ticker") == ticker and st.session_state.get("bt_strategy") == strategy_name:
         stats = st.session_state["bt_stats"]
         a, b, c, d, e, f = st.columns(6)
         a.metric("Rendimento totale", pct(stats["Rendimento totale"]))
@@ -323,24 +333,33 @@ elif page == "Backtest":
         f.metric("Operazioni", str(stats["Operazioni"]))
         result = st.session_state["bt_result"]
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=result.index, y=result["Equity strategia"], name="Strategia PSAR + SMA50"))
+        fig.add_trace(go.Scatter(x=result.index, y=result["Equity strategia"], name=f"Strategia {strategy_name}"))
         fig.add_trace(go.Scatter(x=result.index, y=result["Equity buy&hold"], name="Buy & Hold"))
         fig.update_layout(height=450, title=f"Equity curve · {ticker}", margin={"l": 10, "r": 10, "t": 50, "b": 10})
         st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"Fonte: {st.session_state['bt_source']}. Costi applicati a ogni variazione di posizione.")
-        with st.expander("Come interpretare i risultati del backtest"):
+        if "Stop ATR" in result.columns:
+            with st.expander("Dettaglio segnali e stop ATR"):
+                st.dataframe(result[["Prezzo", "Posizione", "Stop ATR", "Segnale ingresso", "Segnale uscita"]].tail(30).sort_index(ascending=False), use_container_width=True)
+        st.caption(f"Fonte: {st.session_state['bt_source']}. Costi applicati a ogni entrata e uscita.")
+        with st.expander("Regole della strategia e lettura del backtest"):
             st.markdown("""
-            - **Rendimento totale:** variazione complessiva del capitale simulato nel periodo.
-            - **CAGR:** rendimento annualizzato composto; consente confronti tra periodi di durata diversa.
-            - **Max drawdown:** peggior perdita percentuale dal precedente massimo della curva; più è negativo, più profonda è stata la perdita.
-            - **Sharpe:** rendimento medio rapportato alla volatilità annualizzata (qui senza tasso privo di rischio). Più alto può indicare un miglior rapporto rendimento/volatilità, ma non basta da solo.
-            - **Esposizione:** percentuale delle sedute in cui la strategia è investita.
-            - **Operazioni:** numero di cambi di posizione (entrate e uscite), non numero di singole azioni/contratti.
-            - **Equity curve:** capitale teorico nel tempo; confrontare la linea strategia con Buy & Hold.
+            **Trend + Momentum + ATR**
+            - Filtro FTSE MIB: indice sopra SMA200 e SMA200 crescente a 20 sedute.
+            - Filtro titolo: close sopra SMA200, SMA50 sopra SMA200 e SMA200 crescente.
+            - Forza relativa a 60 sedute positiva rispetto al FTSE MIB.
+            - Ingresso: breakout dei massimi precedenti a 55 sedute oppure ritracciamento recente verso EMA20 seguito da chiusura positiva sopra EMA20.
+            - Stop iniziale e trailing: 3 × ATR(14), che si alza ma non si abbassa; uscita anche alla perdita della SMA50 o del filtro di mercato.
+            - Segnali calcolati alla chiusura e applicati dalla seduta successiva. Solo posizioni long.
 
-            Il costo inserito è applicato a ogni entrata e uscita. Il modello è didattico: non include slippage, imposte, dividendi, corporate actions, spread, liquidità, né survivorship bias. I risultati passati non predicono quelli futuri.
+            **Metriche**
+            - CAGR: rendimento annualizzato composto.
+            - Max drawdown: massima perdita dal precedente massimo.
+            - Sharpe: rendimento medio annualizzato / volatilità annualizzata, senza tasso privo di rischio.
+            - Esposizione: quota di sedute investite; operazioni: cambi di posizione.
+
+            Il modello giornaliero approssima l'esecuzione dello stop usando Open/Low/Close; non simula slippage, fiscalità, dividendi o corporate actions. Il confronto con Buy & Hold è sul rendimento del prezzo, non sul total return. I risultati passati non predicono quelli futuri.
             """)
-        st.warning("Backtest didattico: non include slippage, fiscalità, dividendi, corporate actions, vincoli di liquidità o survivorship bias. Non è una previsione né una raccomandazione d'investimento.")
+        st.warning("Backtest didattico: non è una previsione né una raccomandazione d'investimento. Valutare la robustezza su periodi distinti e con costi realistici.")
 
 else:
     st.subheader("Metodo, fonte dati e diagnostica")

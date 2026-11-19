@@ -2,7 +2,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from engine import add_indicators, load_constituents, run_backtest, BENCHMARK
+from engine import (add_indicators, load_constituents, run_backtest, run_momentum_backtest, single_stock_signal, BENCHMARK)
 
 
 class EngineSmokeTests(unittest.TestCase):
@@ -38,6 +38,14 @@ class EngineSmokeTests(unittest.TestCase):
         self.assertEqual(len(curve), len(self.data))
         self.assertIn("CAGR", stats)
         self.assertIn("Max drawdown", stats)
+
+    def test_momentum_backtest_and_signal(self):
+        curve, stats = run_momentum_backtest(self.data, self.data)
+        self.assertEqual(len(curve), len(self.data))
+        self.assertIn("Stop ATR", curve.columns)
+        self.assertIn("CAGR", stats)
+        signal = single_stock_signal(self.data, self.data)
+        self.assertIn(signal["signal"], ["COMPRA", "ATTENDI", "DATI INSUFFICIENTI"])
 
 
 if __name__ == "__main__":
